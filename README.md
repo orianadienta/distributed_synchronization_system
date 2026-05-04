@@ -9,8 +9,9 @@ Implementasi sistem sinkronisasi terdistribusi berbasis **Raft Consensus** yang 
 ---
 
 ## Link Youtube
+https://youtu.be/k1-kSMF17io?si=AUnCQWCNhLSFA9Y4
 
-
+---
 
 ## Struktur Proyek
 
