@@ -1,20 +1,20 @@
-# Deployment Guide
+# Panduan Deployment
 
-## Prerequisites
+## Prasyarat
 
-| Tool | Minimum version | Notes |
-|------|----------------|-------|
-| Python | 3.8 | 3.11 recommended |
+| Alat | Versi Minimum | Catatan |
+|------|---------------|---------|
+| Python | 3.8 | 3.11 direkomendasikan |
 | pip | 23+ | |
-| Docker | 24+ | For containerised deployment |
-| Docker Compose | 2.20+ | Plugin version (`docker compose`) |
-| Redis | 7+ | Only needed for persistence extensions |
+| Docker | 24+ | Untuk deployment terkontainerisasi |
+| Docker Compose | 2.20+ | Versi plugin (`docker compose`) |
+| Redis | 7+ | Hanya diperlukan untuk ekstensi persistensi |
 
 ---
 
-## Quick Start (Local, No Docker)
+## Mulai Cepat (Lokal, Tanpa Docker)
 
-### 1. Install dependencies
+### 1. Instal dependensi
 
 ```bash
 python -m venv .venv
@@ -22,16 +22,16 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Copy and edit environment file
+### 2. Salin dan edit file environment
 
 ```bash
 cp .env.example .env
-# edit .env if you need to change ports or Redis host
+# edit .env jika perlu mengubah port atau host Redis
 ```
 
-### 3. Start a 3-node Lock Manager cluster
+### 3. Mulai kluster Lock Manager 3-node
 
-Open **three separate terminals** from the project root.
+Buka **tiga terminal terpisah** dari root proyek.
 
 **Terminal 1 – node-1**
 ```bash
@@ -54,91 +54,91 @@ NODE_ID=node-3 NODE_PORT=8003 NODE_TYPE=lock \
     python main.py
 ```
 
-### 4. Verify the cluster
+### 4. Verifikasi kluster
 
-Within a few seconds one node will win the election.  Check with:
+Dalam beberapa detik, satu node akan memenangkan pemilihan.  Periksa dengan:
 
 ```bash
 curl -s http://localhost:8001/status | python -m json.tool
-# Look for "role": "leader" on one node and "role": "follower" on the others.
+# Cari "role": "leader" di satu node dan "role": "follower" di node lainnya.
 ```
 
-### 5. Try a lock acquire
+### 5. Coba acquire kunci
 
 ```bash
-# Acquire an exclusive lock (replace port with whichever node is leader)
+# Acquire kunci eksklusif (ganti port dengan node yang menjadi leader)
 curl -s -X POST http://localhost:8001/lock/acquire \
   -H "Content-Type: application/json" \
   -d '{"lock_name":"my-resource","mode":"exclusive","holder_id":"client-1","ttl":30}' \
   | python -m json.tool
 
-# Release it
+# Lepaskan kunci
 curl -s -X POST http://localhost:8001/lock/release \
   -H "Content-Type: application/json" \
-  -d '{"lock_name":"my-resource","request_id":"<request_id from above>","holder_id":"client-1"}' \
+  -d '{"lock_name":"my-resource","request_id":"<request_id dari atas>","holder_id":"client-1"}' \
   | python -m json.tool
 ```
 
 ---
 
-## Docker Compose Deployment
+## Deployment Docker Compose
 
-This starts **9 nodes** (3 × lock, 3 × queue, 3 × cache) plus Redis.
+Ini memulai **9 node** (3 × lock, 3 × queue, 3 × cache) plus Redis.
 
 ```bash
-# Build images and start
+# Build image dan mulai
 docker compose -f docker/docker-compose.yml up --build
 
-# Run in background
+# Jalankan di latar belakang
 docker compose -f docker/docker-compose.yml up -d --build
 
-# Check logs
+# Periksa log
 docker compose -f docker/docker-compose.yml logs -f lock-node-1
 
-# Stop and clean up
+# Stop dan bersihkan
 docker compose -f docker/docker-compose.yml down -v
 ```
 
-### Port mapping
+### Pemetaan port
 
-| Service | External port |
-|---------|--------------|
+| Layanan | Port Eksternal |
+|---------|----------------|
 | lock-node-1 | 8001 |
 | queue-node-1 | 8002 |
 | cache-node-1 | 8003 |
 | Redis | 6379 |
 
-The remaining nodes in each cluster are reachable from within the Docker network but not exposed externally by default.  Add more `ports:` entries in `docker-compose.yml` if you need direct access.
+Node lainnya di setiap kluster dapat dijangkau dari dalam jaringan Docker tetapi tidak diekspos secara eksternal secara default.  Tambahkan entri `ports:` lebih banyak di `docker-compose.yml` jika Anda memerlukan akses langsung.
 
 ---
 
-## Running the Tests
+## Menjalankan Tes
 
-### Unit tests (fast, no network)
+### Tes unit (cepat, tanpa jaringan)
 
 ```bash
 pytest tests/unit/ -v
 ```
 
-### Integration tests (3-node in-process cluster)
+### Tes integrasi (kluster 3-node dalam proses)
 
 ```bash
 pytest tests/integration/ -v --timeout=30
 ```
 
-### Performance tests
+### Tes performa
 
 ```bash
 pytest tests/performance/ -v -s --timeout=120
 ```
 
-### All tests with coverage
+### Semua tes dengan coverage
 
 ```bash
 pytest tests/ --cov=src --cov-report=term-missing --timeout=60
 ```
 
-### Parallel execution
+### Eksekusi paralel
 
 ```bash
 pytest tests/unit/ tests/integration/ -n auto --timeout=30
@@ -146,17 +146,17 @@ pytest tests/unit/ tests/integration/ -n auto --timeout=30
 
 ---
 
-## Load Testing with Locust
+## Load Testing dengan Locust
 
-Start the relevant node cluster first (see Quick Start), then:
+Mulai kluster node yang relevan terlebih dahulu (lihat Mulai Cepat), lalu:
 
 ```bash
-# Web UI at http://localhost:8089
+# Web UI di http://localhost:8089
 locust -f benchmarks/load_test_scenarios.py \
     --host http://localhost:8001 \
     --users 50 --spawn-rate 5
 
-# Headless (CI mode) – 60 second run
+# Headless (mode CI) – jalankan 60 detik
 locust -f benchmarks/load_test_scenarios.py \
     --host http://localhost:8001 \
     --users 30 --spawn-rate 10 \
@@ -164,47 +164,47 @@ locust -f benchmarks/load_test_scenarios.py \
     --csv=results/locust
 ```
 
-Available user classes:
-- `LockManagerUser` – targets the lock cluster
-- `QueueProducerUser` / `QueueConsumerUser` – targets the queue cluster
-- `CacheUser` – targets the cache cluster
-- `MixedWorkloadUser` – realistic mixed scenario
+Kelas pengguna yang tersedia:
+- `LockManagerUser` – menargetkan kluster lock
+- `QueueProducerUser` / `QueueConsumerUser` – menargetkan kluster queue
+- `CacheUser` – menargetkan kluster cache
+- `MixedWorkloadUser` – skenario campuran realistis
 
 ---
 
-## Configuration Reference
+## Referensi Konfigurasi
 
-All settings can be provided via environment variables or the `.env` file (parsed by `python-dotenv`).
+Semua pengaturan dapat diberikan melalui variabel environment atau file `.env` (diparse oleh `python-dotenv`).
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NODE_ID` | `node-1` | Unique node identifier |
-| `NODE_HOST` | `0.0.0.0` | Bind address |
-| `NODE_PORT` | `8000` | HTTP port |
+| Variabel | Default | Deskripsi |
+|----------|---------|-----------|
+| `NODE_ID` | `node-1` | Pengenal node unik |
+| `NODE_HOST` | `0.0.0.0` | Alamat bind |
+| `NODE_PORT` | `8000` | Port HTTP |
 | `NODE_TYPE` | `lock` | `lock` / `queue` / `cache` |
-| `PEERS` | _(empty)_ | Comma-separated `id:host:port` |
-| `DATA_DIR` | `./data` | Durable state directory |
+| `PEERS` | _(kosong)_ | Comma-separated `id:host:port` |
+| `DATA_DIR` | `./data` | Direktori state tahan lama |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
-| `REDIS_HOST` | `127.0.0.1` | Redis host |
-| `REDIS_PORT` | `6379` | Redis port |
-| `ELECTION_TIMEOUT_MIN` | `0.15` | Minimum election timeout (s) |
-| `ELECTION_TIMEOUT_MAX` | `0.30` | Maximum election timeout (s) |
-| `HEARTBEAT_INTERVAL` | `0.05` | Leader heartbeat period (s) |
-| `RPC_TIMEOUT` | `0.10` | RPC call timeout (s) |
-| `LOCK_DEFAULT_TTL` | `30.0` | Default lock TTL (s) |
-| `DEADLOCK_DETECTION_INTERVAL` | `5.0` | Deadlock scan period (s) |
-| `QUEUE_VIRTUAL_NODES` | `150` | Virtual nodes in hash ring |
-| `ACK_TIMEOUT` | `30.0` | Queue message ack timeout (s) |
-| `CACHE_MAX_SIZE` | `1000` | LRU cache capacity (entries) |
-| `CACHE_TTL` | `300.0` | Default cache entry TTL (s) |
+| `REDIS_HOST` | `127.0.0.1` | Host Redis |
+| `REDIS_PORT` | `6379` | Port Redis |
+| `ELECTION_TIMEOUT_MIN` | `0.15` | Timeout pemilihan minimum (s) |
+| `ELECTION_TIMEOUT_MAX` | `0.30` | Timeout pemilihan maksimum (s) |
+| `HEARTBEAT_INTERVAL` | `0.05` | Periode heartbeat leader (s) |
+| `RPC_TIMEOUT` | `0.10` | Timeout panggilan RPC (s) |
+| `LOCK_DEFAULT_TTL` | `30.0` | TTL kunci default (s) |
+| `DEADLOCK_DETECTION_INTERVAL` | `5.0` | Periode pemindaian deadlock (s) |
+| `QUEUE_VIRTUAL_NODES` | `150` | Node virtual dalam hash ring |
+| `ACK_TIMEOUT` | `30.0` | Timeout ack pesan antrian (s) |
+| `CACHE_MAX_SIZE` | `1000` | Kapasitas cache LRU (entri) |
+| `CACHE_TTL` | `300.0` | TTL entri cache default (s) |
 
 ---
 
-## Troubleshooting
+## Pemecahan Masalah
 
 ### "Not leader; current leader=…" (HTTP 503)
 
-The node you contacted is a follower.  Find the leader:
+Node yang Anda hubungi adalah follower.  Temukan leader:
 
 ```bash
 for port in 8001 8002 8003; do
@@ -213,44 +213,44 @@ for port in 8001 8002 8003; do
 done
 ```
 
-Then send write requests to the leader port.
+Kemudian kirim permintaan tulis ke port leader.
 
-### No leader elected
+### Tidak ada leader yang dipilih
 
-- Ensure all nodes can reach each other on the configured ports.
-- Check for firewall rules blocking TCP on those ports.
-- Increase `ELECTION_TIMEOUT_MAX` if the network is slow.
-- Run `curl http://localhost:800X/health` on each node to confirm they're up.
+- Pastikan semua node dapat saling menjangkau di port yang dikonfigurasi.
+- Periksa aturan firewall yang memblokir TCP di port tersebut.
+- Tingkatkan `ELECTION_TIMEOUT_MAX` jika jaringan lambat.
+- Jalankan `curl http://localhost:800X/health` di setiap node untuk mengkonfirmasi node berjalan.
 
-### "Connection refused" on startup
+### "Connection refused" saat startup
 
-The HTTP server takes a moment to bind.  Add a `sleep 1` between starting nodes locally, or rely on the `depends_on` health-check in Docker Compose.
+Server HTTP membutuhkan waktu sejenak untuk bind.  Tambahkan `sleep 1` antara memulai node secara lokal, atau andalkan pemeriksaan `depends_on` di Docker Compose.
 
-### Data directory permission errors
+### Error izin direktori data
 
 ```bash
 mkdir -p ./data && chmod 750 ./data
 ```
 
-Inside Docker the `/data` volume is created automatically; ensure the container user has write access.
+Di dalam Docker, volume `/data` dibuat secara otomatis; pastikan pengguna kontainer memiliki akses tulis.
 
-### Tests failing with "Address already in use"
+### Tes gagal dengan "Address already in use"
 
-The integration and performance tests bind to fixed ports (`19700+`, `19800+`).  If a previous test run crashed, wait a few seconds for the OS to reclaim the sockets, then retry.
+Tes integrasi dan performa bind ke port tetap (`19700+`, `19800+`).  Jika jalankan tes sebelumnya crash, tunggu beberapa detik agar OS mengklaim kembali socket, lalu coba lagi.
 
 ---
 
 ## Monitoring
 
-Every node exposes:
+Setiap node mengekspos:
 
 ```
-GET /health    → liveness probe (used by Docker HEALTHCHECK)
-GET /status    → Raft state + failure-detector phi + all metrics
-GET /metrics   → metrics-only (suitable for scraping)
+GET /health    → probe liveness (digunakan oleh Docker HEALTHCHECK)
+GET /status    → status Raft + phi failure-detector + semua metrik
+GET /metrics   → metrik saja (cocok untuk scraping)
 ```
 
-To scrape metrics into Prometheus, add a job to your `prometheus.yml`:
+Untuk mengambil metrik ke Prometheus, tambahkan job ke `prometheus.yml` Anda:
 
 ```yaml
 scrape_configs:
@@ -263,4 +263,4 @@ scrape_configs:
     metrics_path: /metrics
 ```
 
-> The `/metrics` endpoint returns JSON, not Prometheus text format.  To use the Prometheus text format, enable `prometheus-client` in `src/utils/metrics.py` (stub is already imported in `requirements.txt`).
+> Endpoint `/metrics` mengembalikan JSON, bukan format teks Prometheus.  Untuk menggunakan format teks Prometheus, aktifkan `prometheus-client` di `src/utils/metrics.py` (stub sudah diimpor di `requirements.txt`).

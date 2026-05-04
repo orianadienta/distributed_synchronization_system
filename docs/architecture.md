@@ -1,8 +1,8 @@
-# Architecture
+# Arsitektur
 
-## Overview
+## Gambaran Umum
 
-The distributed sync system is a collection of three independent subsystems that all share the same underlying consensus layer: **Raft**.  Every subsystem runs as a cluster of at least three nodes so that the system can tolerate the failure of any single node while still making progress.
+Sistem sinkronisasi terdistribusi adalah kumpulan tiga subsistem independen yang semuanya berbagi lapisan konsensus yang sama: **Raft**.  Setiap subsistem berjalan sebagai kluster minimal tiga node sehingga sistem dapat mentoleransi kegagalan satu node mana pun sambil tetap memproses permintaan.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -29,103 +29,103 @@ The distributed sync system is a collection of three independent subsystems that
 
 ---
 
-## Raft Consensus
+## Konsensus Raft
 
-### Why Raft?
+### Mengapa Raft?
 
-Raft was chosen over Paxos because its design explicitly prioritises understandability.  All three subsystems need the same guarantee: a **linearisable, totally-ordered log** that survives node failures.  Raft provides this with a clear role model (leader / follower / candidate) and a well-defined set of RPCs.
+Raft dipilih dibandingkan Paxos karena desainnya secara eksplisit mengutamakan keterbacaan.  Ketiga subsistem membutuhkan jaminan yang sama: **log yang terurut secara total dan linearisable** yang bertahan dari kegagalan node.  Raft menyediakan ini dengan model peran yang jelas (leader / follower / candidate) dan sekumpulan RPC yang terdefinisi dengan baik.
 
-### Roles
+### Peran
 
-| Role | Responsibilities |
-|------|-----------------|
-| **Leader** | Accepts client proposals, replicates log entries to followers, advances commit index |
-| **Follower** | Accepts and persists AppendEntries from the leader, resets election timer on heartbeat |
-| **Candidate** | Campaigns for election by sending RequestVote to all peers |
+| Peran | Tanggung Jawab |
+|-------|----------------|
+| **Leader** | Menerima proposal klien, mereplikasi entri log ke follower, memajukan commit index |
+| **Follower** | Menerima dan menyimpan AppendEntries dari leader, mereset timer pemilihan saat menerima heartbeat |
+| **Candidate** | Berkampanye untuk pemilihan dengan mengirim RequestVote ke semua peer |
 
-### Election
+### Pemilihan (Election)
 
-1. A follower's election timer fires (random in `[ELECTION_TIMEOUT_MIN, ELECTION_TIMEOUT_MAX]`).
-2. The node transitions to **Candidate**, increments its term, votes for itself, and broadcasts **RequestVote**.
-3. A candidate becomes **Leader** when it receives votes from a strict majority of the cluster.
-4. Split-vote? The timer fires again with a fresh random delay, restarting the election.
+1. Timer pemilihan follower aktif (acak dalam rentang `[ELECTION_TIMEOUT_MIN, ELECTION_TIMEOUT_MAX]`).
+2. Node bertransisi menjadi **Candidate**, menambah term-nya, memilih dirinya sendiri, dan menyiarkan **RequestVote**.
+3. Candidate menjadi **Leader** ketika menerima suara dari mayoritas mutlak kluster.
+4. Split-vote? Timer aktif kembali dengan penundaan acak baru, memulai ulang pemilihan.
 
-The randomised timeout (150–300 ms default) makes split elections statistically rare.
+Timeout yang diacak (default 150–300 ms) membuat pemilihan terbagi menjadi sangat jarang secara statistik.
 
-### Log Replication
+### Replikasi Log
 
 ```
 Client → propose(cmd)
            │
            ▼
-        Leader appends to log (in-memory + disk)
+        Leader menambahkan ke log (memori + disk)
            │
            ├─── AppendEntries RPC → Follower-1 ──► ack
            ├─── AppendEntries RPC → Follower-2 ──► ack
            │
-           ▼  (quorum of acks received)
-        Leader advances commitIndex
+           ▼  (kuorum ack diterima)
+        Leader memajukan commitIndex
            │
            ▼
-        apply_command() called on each node as lastApplied catches up
+        apply_command() dipanggil di setiap node saat lastApplied menyusul
            │
            ▼
-        Client Future resolved with result
+        Client Future diselesaikan dengan hasil
 ```
 
-Followers that fall behind receive the missing entries in the next `AppendEntries` call.  The leader backs off `nextIndex[peer]` by one slot per rejection until it finds the divergence point.
+Follower yang tertinggal menerima entri yang hilang pada panggilan `AppendEntries` berikutnya.  Leader memundurkan `nextIndex[peer]` satu slot per penolakan hingga menemukan titik divergensi.
 
-### Persistence
+### Persistensi
 
-Three fields must survive a crash (§5.4 of the paper):
+Tiga field harus bertahan dari crash (§5.4 dari paper):
 
-| Field | Where stored |
-|-------|-------------|
-| `currentTerm` | `<data_dir>/<node_id>-state.json` (atomic rename) |
-| `votedFor` | same file |
-| `log[]` | same file (full serialisation; snapshots trim it) |
+| Field | Lokasi Penyimpanan |
+|-------|--------------------|
+| `currentTerm` | `<data_dir>/<node_id>-state.json` (penggantian nama atomik) |
+| `votedFor` | file yang sama |
+| `log[]` | file yang sama (serialisasi penuh; snapshot memangkasnya) |
 
 ### Snapshotting
 
-When the log exceeds `SNAPSHOT_THRESHOLD` entries the leader can compact it into a snapshot.  The snapshot stores the serialised state-machine image up to `lastIncludedIndex`.  Followers that are very far behind receive the snapshot via **InstallSnapshot** RPC instead of individual log entries.
+Ketika log melebihi `SNAPSHOT_THRESHOLD` entri, leader dapat memadatkannya menjadi snapshot.  Snapshot menyimpan image state-machine yang telah diserialisasi hingga `lastIncludedIndex`.  Follower yang sangat tertinggal menerima snapshot melalui RPC **InstallSnapshot** alih-alih entri log individual.
 
 ---
 
-## Subsystem Designs
+## Desain Subsistem
 
-### Distributed Lock Manager
+### Manajer Kunci Terdistribusi
 
 ```
 acquire_lock(name, mode, holder_id, ttl)
     │
-    ├─ if not leader → PermissionError (client should retry on leader)
+    ├─ jika bukan leader → PermissionError (klien harus coba ulang di leader)
     │
     └─ propose({op: "acquire", ...})
               │
               ▼ Raft commits
           apply_command()
               │
-              ├─ can_acquire? → add to holders, resolve Future (granted=True)
-              └─ else        → add to waiters, resolve Future (granted=False)
+              ├─ bisa acquire? → tambah ke holders, selesaikan Future (granted=True)
+              └─ tidak        → tambah ke waiters, selesaikan Future (granted=False)
 ```
 
-**Lock modes**
+**Mode kunci**
 
-| Mode | Semantics |
-|------|-----------|
-| `shared` | Multiple holders allowed; no writer |
-| `exclusive` | Only one holder; no readers |
+| Mode | Semantik |
+|------|----------|
+| `shared` | Beberapa pemegang diizinkan; tidak ada penulis |
+| `exclusive` | Hanya satu pemegang; tidak ada pembaca |
 
-**TTL expiry** – A background coroutine on the leader scans every second and proposes `CMD_EXPIRE` for any holder whose `expires_at` has passed.  This prevents stale locks from blocking the system if a client crashes.
+**Kedaluwarsa TTL** – Coroutine latar belakang di leader memindai setiap detik dan mengusulkan `CMD_EXPIRE` untuk pemegang yang `expires_at`-nya telah lewat.  Ini mencegah kunci yang kedaluwarsa memblokir sistem jika klien crash.
 
-**Deadlock detection** – Every time a `CMD_ACQUIRE` is queued into `waiters`, the waiter's ID is added to the wait-for graph.  A DFS-based cycle detector runs every `DEADLOCK_DETECTION_INTERVAL` seconds.  If a cycle is found, the youngest holder in the cycle is chosen as a victim and its lock is force-released.
+**Deteksi Deadlock** – Setiap kali `CMD_ACQUIRE` antri ke `waiters`, ID waiter ditambahkan ke graf wait-for.  Detektor siklus berbasis DFS berjalan setiap `DEADLOCK_DETECTION_INTERVAL` detik.  Jika siklus ditemukan, pemegang termuda dalam siklus dipilih sebagai korban dan kuncinya dilepas paksa.
 
-### Distributed Queue
+### Antrian Terdistribusi
 
-**Consistent hashing** maps queue names → responsible nodes using a hash ring with 150 virtual nodes per real node.  This distributes load evenly and minimises reshuffling when nodes join or leave.
+**Consistent hashing** memetakan nama antrian → node yang bertanggung jawab menggunakan hash ring dengan 150 node virtual per node nyata.  Ini mendistribusikan beban secara merata dan meminimalkan redistribusi ketika node bergabung atau pergi.
 
 ```
-Enqueue flow:
+Alur Enqueue:
   producer → POST /queue/enqueue
                │
                └─ propose(CMD_ENQUEUE) → Raft
@@ -133,53 +133,53 @@ Enqueue flow:
                            ▼
                       apply_command → _queues[name].append(msg)
 
-Consume flow:
+Alur Consume:
   consumer → POST /queue/consume
                │
-               └─ consume(queue_name)   [not Raft-replicated for speed]
+               └─ consume(queue_name)   [tidak direplikasi Raft demi kecepatan]
                            │
-                           ├─ pop from _queues[name]
-                           └─ store in _in_flight[message_id]
+                           ├─ pop dari _queues[name]
+                           └─ simpan di _in_flight[message_id]
 
 Ack / Nack:
   consumer → POST /queue/ack
                └─ propose(CMD_ACK or CMD_NACK) → Raft
 ```
 
-**At-least-once delivery** – Unacknowledged messages whose `ack_timeout` has elapsed are re-queued at the front of the queue by the `_redelivery_loop` background task.
+**Pengiriman at-least-once** – Pesan yang belum diakui yang `ack_timeout`-nya telah berlalu akan dimasukkan kembali ke awal antrian oleh task latar belakang `_redelivery_loop`.
 
-### Distributed Cache (MESI)
+### Cache Terdistribusi (MESI)
 
-Each cache entry tracks a **MESI state** that is replicated via Raft:
+Setiap entri cache melacak **status MESI** yang direplikasi melalui Raft:
 
-| State | Meaning |
-|-------|---------|
-| **M** Modified | Dirty; only this node holds valid data |
-| **E** Exclusive | Clean; only this node has a copy |
-| **S** Shared | Clean; multiple nodes may cache this key |
-| **I** Invalid | Stale; must re-fetch from global store |
+| Status | Makna |
+|--------|-------|
+| **M** Modified (Dimodifikasi) | Kotor; hanya node ini yang menyimpan data valid |
+| **E** Exclusive (Eksklusif) | Bersih; hanya node ini yang memiliki salinan |
+| **S** Shared (Dibagikan) | Bersih; beberapa node dapat menyimpan cache kunci ini |
+| **I** Invalid (Tidak Valid) | Kedaluwarsa; harus diambil ulang dari penyimpanan global |
 
-**Write path** – `CMD_WRITE` is proposed through Raft.  On apply, the writing node sets its local line to `M` or `E`; all other nodes receive the new value but mark their copy `I` (forcing them to serve from `_global_store` until they promote to `S` on next read).
+**Jalur tulis** – `CMD_WRITE` diusulkan melalui Raft.  Saat diterapkan, node penulis mengatur baris lokalnya ke `M` atau `E`; semua node lain menerima nilai baru tetapi menandai salinan mereka `I` (memaksa mereka untuk melayani dari `_global_store` sampai dipromosikan ke `S` saat pembacaan berikutnya).
 
-**LRU eviction** – The `LRUCache` uses an `OrderedDict` to track access order.  When `capacity` is exceeded, the least-recently-used entry is evicted.
+**Eviksi LRU** – `LRUCache` menggunakan `OrderedDict` untuk melacak urutan akses.  Ketika `capacity` terlampaui, entri yang paling jarang diakses baru-baru ini dieviksi.
 
 ---
 
-## Communication Layer
+## Lapisan Komunikasi
 
 ### MessageTransport
 
-An `aiohttp` HTTP server + client pair.  Each node exposes a single `POST /rpc` endpoint.  Messages are JSON objects with a `type` discriminator.  The transport is intentionally protocol-agnostic; swapping HTTP for ZeroMQ or gRPC only requires replacing this class.
+Pasangan server + klien HTTP `aiohttp`.  Setiap node mengekspos satu endpoint `POST /rpc`.  Pesan adalah objek JSON dengan diskriminator `type`.  Transport ini secara sengaja agnostik terhadap protokol; mengganti HTTP dengan ZeroMQ atau gRPC hanya memerlukan penggantian kelas ini.
 
 ### FailureDetector
 
-Implements the **Phi Accrual** algorithm (Hayashibara et al., 2004).  Instead of a binary "up / down" judgement, it emits a continuous suspicion level φ.  When φ exceeds the configurable threshold (default 8.0) the peer is *suspected*.  If a heartbeat later arrives, the suspicion is cleared automatically.
+Mengimplementasikan algoritma **Phi Accrual** (Hayashibara et al., 2004).  Alih-alih penilaian biner "naik / turun", ini menghasilkan tingkat kecurigaan berkelanjutan φ.  Ketika φ melebihi ambang batas yang dapat dikonfigurasi (default 8.0), peer dicurigai.  Jika heartbeat datang kemudian, kecurigaan dibersihkan secara otomatis.
 
 ---
 
 ## Deployment
 
-### Local (3 nodes, one terminal each)
+### Lokal (3 node, satu terminal masing-masing)
 
 ```bash
 # Terminal 1
@@ -204,29 +204,29 @@ NODE_ID=node-3 NODE_PORT=8003 NODE_TYPE=lock \
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-This starts a 9-node cluster (3 × lock, 3 × queue, 3 × cache) plus Redis.
+Ini memulai kluster 9 node (3 × lock, 3 × queue, 3 × cache) plus Redis.
 
-### Scaling
+### Penskalaan
 
-To add a fourth lock node without downtime:
+Untuk menambahkan node lock keempat tanpa downtime:
 
-1. Deploy the new container with its `NODE_ID` and `PEERS` pointing to the existing three.
-2. Update `PEERS` on each existing node and send `SIGHUP` (or rolling-restart).
+1. Deploy kontainer baru dengan `NODE_ID` dan `PEERS`-nya yang menunjuk ke tiga yang sudah ada.
+2. Perbarui `PEERS` di setiap node yang sudah ada dan kirim `SIGHUP` (atau rolling-restart).
 
-> **Note:** Dynamic membership changes (joint consensus) are not yet implemented. Static clusters are assumed for now. This is a known extension point.
+> **Catatan:** Perubahan keanggotaan dinamis (joint consensus) belum diimplementasikan. Kluster statis diasumsikan untuk saat ini. Ini adalah titik ekstensi yang diketahui.
 
 ---
 
-## Fault Tolerance Matrix
+## Matriks Toleransi Kegagalan
 
-| Scenario | Behaviour |
-|----------|-----------|
-| 1 of 3 nodes crashes | Remaining 2 form quorum; cluster continues normally |
-| 2 of 3 nodes crash | No quorum; cluster suspends commits; reads may still be served stale |
-| Leader crashes | Followers detect missing heartbeats; new election within 1 election timeout |
-| Network partition (minority) | Minority nodes cannot commit; majority continues |
-| Network partition (even split) | No side has majority; both halt until partition heals |
-| Node restarts with stale log | Raft AppendEntries reconciles the log on reconnect |
-| Node restarts after snapshot | InstallSnapshot brings it up to date |
+| Skenario | Perilaku |
+|----------|----------|
+| 1 dari 3 node crash | 2 node yang tersisa membentuk kuorum; kluster berlanjut normal |
+| 2 dari 3 node crash | Tidak ada kuorum; kluster menangguhkan commit; pembacaan mungkin masih dilayani dengan data basi |
+| Leader crash | Follower mendeteksi heartbeat yang hilang; pemilihan baru dalam 1 timeout pemilihan |
+| Partisi jaringan (minoritas) | Node minoritas tidak dapat commit; mayoritas berlanjut |
+| Partisi jaringan (split genap) | Tidak ada sisi yang memiliki mayoritas; keduanya berhenti sampai partisi pulih |
+| Node restart dengan log basi | Raft AppendEntries merekonsiliasi log saat terhubung kembali |
+| Node restart setelah snapshot | InstallSnapshot memperbarui node hingga terkini |
 
 ---
