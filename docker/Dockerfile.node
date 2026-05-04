@@ -1,0 +1,40 @@
+# ── Build stage ───────────────────────────────────────────────────────────────
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ── Runtime stage ─────────────────────────────────────────────────────────────
+FROM python:3.11-slim
+
+LABEL maintainer="distributed-sync-system"
+LABEL description="Raft-based distributed synchronization node"
+
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
+
+# Copy source code
+COPY src/ ./src/
+COPY main.py ./main.py
+
+# Default environment (overridden by docker-compose / .env)
+ENV NODE_ID=node-1
+ENV NODE_HOST=0.0.0.0
+ENV NODE_PORT=8000
+ENV PEERS=""
+ENV DATA_DIR=/data
+ENV LOG_LEVEL=INFO
+ENV NODE_TYPE=lock
+
+# Persistent data volume
+VOLUME ["/data"]
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${NODE_PORT}/health')" || exit 1
+
+CMD ["python", "main.py"]

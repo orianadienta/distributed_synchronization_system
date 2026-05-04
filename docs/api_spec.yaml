@@ -1,0 +1,550 @@
+openapi: "3.1.0"
+info:
+  title: Distributed Sync System API
+  version: "1.0.0"
+  description: |
+    REST API for the three distributed subsystems: Lock Manager, Queue, and Cache.
+    All subsystems expose a `/health`, `/status`, and `/metrics` endpoint in addition
+    to their domain-specific endpoints documented below.
+
+    **Important:** Write operations (acquire, enqueue, put, delete) must be directed
+    to the **leader** node of the relevant cluster.  Followers return HTTP 503 with
+    `{"status": "error", "reason": "Not leader; current leader=<id>"}`.
+  contact:
+    name: ITK Distributed Systems
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8001
+    description: Lock Manager node 1 (may be leader)
+  - url: http://localhost:8002
+    description: Queue node 1 (may be leader)
+  - url: http://localhost:8003
+    description: Cache node 1 (may be leader)
+
+# ─────────────────────────────────────────────────────────────────────────────
+tags:
+  - name: common
+    description: Endpoints available on every node type
+  - name: lock
+    description: Distributed Lock Manager
+  - name: queue
+    description: Distributed Queue System
+  - name: cache
+    description: Distributed Cache (MESI coherence)
+
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Common ──────────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      tags: [common]
+      summary: Liveness probe
+      description: Returns HTTP 200 if the process is alive.
+      responses:
+        "200":
+          description: Node is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  node_id: { type: string }
+                  status:  { type: string, example: ok }
+
+  /status:
+    get:
+      tags: [common]
+      summary: Full node status
+      description: Returns Raft state, failure-detector phi values, and metrics.
+      responses:
+        "200":
+          description: Status snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeStatus"
+
+  /metrics:
+    get:
+      tags: [common]
+      summary: Metrics snapshot
+      description: Returns counter, gauge, and histogram values for this node.
+      responses:
+        "200":
+          description: Metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Metrics"
+
+  # ── Lock Manager ─────────────────────────────────────────────────────────────
+
+  /lock/acquire:
+    post:
+      tags: [lock]
+      summary: Acquire a distributed lock
+      description: |
+        Acquires the named lock in the requested mode.
+        Blocks (on the server side) until the lock is granted or `timeout` elapses.
+        Must be called on the **leader** node.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcquireRequest"
+            example:
+              lock_name: "billing-job"
+              mode:      "exclusive"
+              holder_id: "worker-42"
+              ttl:       30.0
+              timeout:   10.0
+      responses:
+        "200":
+          description: Lock acquired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcquireResponse"
+        "408":
+          description: Timed out waiting for lock
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: This node is not the leader
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /lock/release:
+    post:
+      tags: [lock]
+      summary: Release a distributed lock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReleaseRequest"
+      responses:
+        "200":
+          description: Lock released (or was not held)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReleaseResponse"
+
+  /lock/status:
+    get:
+      tags: [lock]
+      summary: List all active locks
+      responses:
+        "200":
+          description: Map of lock name → lock info
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/LockInfo"
+
+  /lock/deadlocks:
+    get:
+      tags: [lock]
+      summary: Deadlock detection report
+      description: Returns detected cycles in the wait-for graph.
+      responses:
+        "200":
+          description: Deadlock report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeadlockReport"
+
+  # ── Queue System ─────────────────────────────────────────────────────────────
+
+  /queue/enqueue:
+    post:
+      tags: [queue]
+      summary: Publish a message to a queue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnqueueRequest"
+            example:
+              queue_name:  "email-jobs"
+              payload:     { to: "user@example.com", subject: "Welcome" }
+              producer_id: "api-server-1"
+      responses:
+        "200":
+          description: Message enqueued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnqueueResponse"
+
+  /queue/consume:
+    post:
+      tags: [queue]
+      summary: Consume one message from a queue
+      description: |
+        Returns the next available message and places it **in-flight**.
+        The consumer must call `/queue/ack` within `ACK_TIMEOUT` seconds or
+        the message will be re-queued automatically (at-least-once semantics).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [queue_name]
+              properties:
+                queue_name:
+                  type: string
+      responses:
+        "200":
+          description: Message (or null if queue is empty)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsumeResponse"
+
+  /queue/ack:
+    post:
+      tags: [queue]
+      summary: Acknowledge or negative-acknowledge a message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AckRequest"
+            example:
+              message_id: "3f7a1c2d-…"
+              op: "ack"
+      responses:
+        "200":
+          description: Acknowledgement recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ack, nack] }
+
+  /queue/status:
+    get:
+      tags: [queue]
+      summary: Queue depth and in-flight counts
+      responses:
+        "200":
+          description: Queue status map
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueStatus"
+
+  # ── Cache ─────────────────────────────────────────────────────────────────────
+
+  /cache/{key}:
+    get:
+      tags: [cache]
+      summary: Read a value from the cache
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cache hit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheGetResponse"
+        "404":
+          description: Cache miss
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  found: { type: boolean, example: false }
+
+    put:
+      tags: [cache]
+      summary: Write a value to the cache (replicated via Raft)
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CachePutRequest"
+      responses:
+        "200":
+          description: Value stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CachePutResponse"
+
+    delete:
+      tags: [cache]
+      summary: Invalidate a cache key across all nodes
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Key invalidated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: boolean }
+
+  /cache/stats:
+    get:
+      tags: [cache]
+      summary: LRU cache statistics for this node
+      responses:
+        "200":
+          description: Cache stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheStats"
+
+# ─────────────────────────────────────────────────────────────────────────────
+components:
+  schemas:
+
+    # ── Common ──────────────────────────────────────────────────────────────
+
+    NodeStatus:
+      type: object
+      properties:
+        raft:
+          type: object
+          properties:
+            node_id:       { type: string }
+            role:          { type: string, enum: [leader, follower, candidate] }
+            leader_id:     { type: string, nullable: true }
+            current_term:  { type: integer }
+            commit_index:  { type: integer }
+            last_applied:  { type: integer }
+            log_length:    { type: integer }
+            peers:
+              type: array
+              items: { type: string }
+        phi:
+          type: object
+          description: Phi Accrual suspicion values per peer
+          additionalProperties: { type: number }
+        metrics:
+          $ref: "#/components/schemas/Metrics"
+
+    Metrics:
+      type: object
+      properties:
+        node_id:        { type: string }
+        uptime_seconds: { type: number }
+        timestamp:      { type: number }
+        counters:
+          type: object
+          additionalProperties: { type: number }
+        gauges:
+          type: object
+          additionalProperties: { type: number }
+        histograms:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              count: { type: integer }
+              mean:  { type: number }
+              p50:   { type: number }
+              p95:   { type: number }
+              p99:   { type: number }
+
+    ErrorResponse:
+      type: object
+      properties:
+        status: { type: string }
+        reason: { type: string }
+
+    # ── Lock ────────────────────────────────────────────────────────────────
+
+    AcquireRequest:
+      type: object
+      required: [lock_name, mode, holder_id]
+      properties:
+        lock_name:  { type: string }
+        mode:       { type: string, enum: [shared, exclusive] }
+        holder_id:  { type: string }
+        ttl:        { type: number, default: 30.0 }
+        timeout:    { type: number, default: 10.0 }
+
+    AcquireResponse:
+      type: object
+      properties:
+        status:     { type: string, example: acquired }
+        request_id: { type: string, format: uuid }
+
+    ReleaseRequest:
+      type: object
+      required: [lock_name, request_id, holder_id]
+      properties:
+        lock_name:  { type: string }
+        request_id: { type: string, format: uuid }
+        holder_id:  { type: string }
+
+    ReleaseResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [released, not_found] }
+
+    LockInfo:
+      type: object
+      properties:
+        mode:
+          type: string
+          nullable: true
+          enum: [shared, exclusive]
+        holders:
+          type: array
+          items:
+            type: object
+            properties:
+              holder_id:  { type: string }
+              mode:       { type: string }
+              expires_at: { type: number }
+        waiters:
+          type: array
+          items:
+            type: object
+            properties:
+              holder_id: { type: string }
+              mode:      { type: string }
+
+    DeadlockReport:
+      type: object
+      properties:
+        deadlocks:
+          type: array
+          items:
+            type: array
+            items: { type: string }
+        wait_for:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+
+    # ── Queue ────────────────────────────────────────────────────────────────
+
+    EnqueueRequest:
+      type: object
+      required: [queue_name, payload]
+      properties:
+        queue_name:  { type: string }
+        payload:     {}
+        producer_id: { type: string, default: anonymous }
+
+    EnqueueResponse:
+      type: object
+      properties:
+        message_id: { type: string, format: uuid }
+
+    ConsumeResponse:
+      type: object
+      properties:
+        message:
+          nullable: true
+          oneOf:
+            - $ref: "#/components/schemas/QueueMessage"
+            - type: "null"
+
+    QueueMessage:
+      type: object
+      properties:
+        message_id:  { type: string, format: uuid }
+        queue_name:  { type: string }
+        payload:     {}
+        producer_id: { type: string }
+        created_at:  { type: number }
+        attempts:    { type: integer }
+
+    AckRequest:
+      type: object
+      required: [message_id, op]
+      properties:
+        message_id: { type: string, format: uuid }
+        op:         { type: string, enum: [ack, nack] }
+
+    QueueStatus:
+      type: object
+      properties:
+        queues:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              depth:     { type: integer }
+              in_flight: { type: integer }
+
+    # ── Cache ────────────────────────────────────────────────────────────────
+
+    CacheGetResponse:
+      type: object
+      properties:
+        found: { type: boolean }
+        key:   { type: string }
+        value: {}
+
+    CachePutRequest:
+      type: object
+      required: [value]
+      properties:
+        value: {}
+        ttl:   { type: number, default: 300.0 }
+
+    CachePutResponse:
+      type: object
+      properties:
+        stored:  { type: boolean }
+        version: { type: integer }
+
+    CacheStats:
+      type: object
+      properties:
+        node_id:
+          type: string
+        local_cache:
+          type: object
+          properties:
+            size:       { type: integer }
+            capacity:   { type: integer }
+            hits:       { type: integer }
+            misses:     { type: integer }
+            evictions:  { type: integer }
+            hit_rate:   { type: number }
+        global_keys:
+          type: integer

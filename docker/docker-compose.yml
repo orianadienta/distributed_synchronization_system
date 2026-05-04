@@ -1,0 +1,172 @@
+version: "3.9"
+
+# ── Shared node build ─────────────────────────────────────────────────────────
+x-node-base: &node-base
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.node
+  restart: unless-stopped
+  networks:
+    - raft-net
+  env_file:
+    - ../.env.example
+  volumes:
+    - node-data:/data
+
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+
+  # ── Redis (shared distributed state) ──────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    networks:
+      - raft-net
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Lock Manager cluster (3 nodes) ────────────────────────────────────────
+  lock-node-1:
+    <<: *node-base
+    environment:
+      NODE_ID:   "lock-node-1"
+      NODE_HOST: "0.0.0.0"
+      NODE_PORT: "8001"
+      NODE_TYPE: "lock"
+      PEERS:     "lock-node-2:lock-node-2:8001,lock-node-3:lock-node-3:8001"
+      REDIS_HOST: redis
+    ports:
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  lock-node-2:
+    <<: *node-base
+    environment:
+      NODE_ID:   "lock-node-2"
+      NODE_HOST: "0.0.0.0"
+      NODE_PORT: "8001"
+      NODE_TYPE: "lock"
+      PEERS:     "lock-node-1:lock-node-1:8001,lock-node-3:lock-node-3:8001"
+      REDIS_HOST: redis
+    ports:
+      - "8004:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  lock-node-3:
+    <<: *node-base
+    environment:
+      NODE_ID:   "lock-node-3"
+      NODE_HOST: "0.0.0.0"
+      NODE_PORT: "8001"
+      NODE_TYPE: "lock"
+      PEERS:     "lock-node-1:lock-node-1:8001,lock-node-2:lock-node-2:8001"
+      REDIS_HOST: redis
+    ports:
+      - "8005:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Queue cluster (3 nodes) ───────────────────────────────────────────────
+  queue-node-1:
+    <<: *node-base
+    environment:
+      NODE_ID:   "queue-node-1"
+      NODE_HOST: "0.0.0.0"
+      NODE_PORT: "8002"
+      NODE_TYPE: "queue"
+      PEERS:     "queue-node-2:queue-node-2:8002,queue-node-3:queue-node-3:8002"
+      REDIS_HOST: redis
+    ports:
+      - "8002:8002"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  queue-node-2:
+    <<: *node-base
+    environment:
+      NODE_ID:   "queue-node-2"
+      NODE_HOST: "0.0.0.0"
+      NODE_PORT: "8002"
+      NODE_TYPE: "queue"
+      PEERS:     "queue-node-1:queue-node-1:8002,queue-node-3:queue-node-3:8002"
+      REDIS_HOST: redis
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  queue-node-3:
+    <<: *node-base
+    environment:
+      NODE_ID:   "queue-node-3"
+      NODE_HOST: "0.0.0.0"
+      NODE_PORT: "8002"
+      NODE_TYPE: "queue"
+      PEERS:     "queue-node-1:queue-node-1:8002,queue-node-2:queue-node-2:8002"
+      REDIS_HOST: redis
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Cache cluster (3 nodes) ───────────────────────────────────────────────
+  cache-node-1:
+    <<: *node-base
+    environment:
+      NODE_ID:   "cache-node-1"
+      NODE_HOST: "0.0.0.0"
+      NODE_PORT: "8003"
+      NODE_TYPE: "cache"
+      PEERS:     "cache-node-2:cache-node-2:8003,cache-node-3:cache-node-3:8003"
+      REDIS_HOST: redis
+    ports:
+      - "8003:8003"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  cache-node-2:
+    <<: *node-base
+    environment:
+      NODE_ID:   "cache-node-2"
+      NODE_HOST: "0.0.0.0"
+      NODE_PORT: "8003"
+      NODE_TYPE: "cache"
+      PEERS:     "cache-node-1:cache-node-1:8003,cache-node-3:cache-node-3:8003"
+      REDIS_HOST: redis
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  cache-node-3:
+    <<: *node-base
+    environment:
+      NODE_ID:   "cache-node-3"
+      NODE_HOST: "0.0.0.0"
+      NODE_PORT: "8003"
+      NODE_TYPE: "cache"
+      PEERS:     "cache-node-1:cache-node-1:8003,cache-node-2:cache-node-2:8003"
+      REDIS_HOST: redis
+    depends_on:
+      redis:
+        condition: service_healthy
+
+# ─────────────────────────────────────────────────────────────────────────────
+networks:
+  raft-net:
+    driver: bridge
+
+volumes:
+  node-data:
+  redis-data:

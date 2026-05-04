@@ -1,0 +1,32 @@
+# Core async framework 
+aiohttp==3.9.5
+aiohttp-cors==0.7.0
+
+# Redis client (async) 
+redis==5.0.4
+aioredis==2.0.1          # async wrapper used by queue / cache persistence layer
+
+# Environment variabel
+python-dotenv==1.0.1
+
+# Serialisation 
+msgpack==1.0.8            # compact binary for log entries (optional fast path)
+orjson==3.10.3            # faster JSON encode/decode
+
+# Testing 
+pytest==8.2.0
+pytest-asyncio==0.23.6
+pytest-timeout==2.3.1
+pytest-cov==5.0.0
+pytest-xdist==3.5.0       # parallel test execution
+
+# Load testing 
+locust==2.28.0
+
+# Observability / metrics 
+prometheus-client==0.20.0 
+
+# Development tooling 
+black==24.4.2
+ruff==0.4.4
+mypy==1.10.0
